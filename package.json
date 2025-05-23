@@ -1,0 +1,40 @@
+{
+  "name": "vidzap-cli",
+  "version": "1.0.0",
+  "description": "🔥 Vidzap CLI - Next-gen Node.js YouTube video/audio downloader, fast & reliable!",
+  "main": "app.js",
+  "type": "module",
+  "bin": {
+    "vidzap": "./app.js"
+  },
+  "scripts": {
+    "start": "node app.js",
+    "dev": "nodemon app.js",
+    "lint": "eslint . --fix"
+  },
+  "keywords": [
+    "youtube",
+    "downloader",
+    "video",
+    "audio",
+    "cli",
+    "ffmpeg",
+    "nodejs",
+    "vidzap"
+  ],
+  "author": "hakan",
+  "license": "MIT",
+  "dependencies": {
+    "@distube/ytdl-core": "^4.16.10",
+    "fluent-ffmpeg": "^2.1.3",
+    "inquirer": "^12.6.1",
+    "ytdl-core": "^4.11.5"
+  },
+  "devDependencies": {
+    "eslint": "^8.0.0",
+    "nodemon": "^2.0.22"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}

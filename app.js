@@ -9,12 +9,12 @@ async function main() {
         {
           type: "input",
           name: "url",
-          message: "YouTube video URL gir (Çıkmak için boş bırak):",
+          message: "Enter YouTube video URL (Leave empty to exit):",
         },
       ]);
 
       if (!url.trim()) {
-        console.log("Çıkış yapılıyor, görüşürüz!");
+        console.log("Exiting, see you!");
         break;
       }
 
@@ -22,7 +22,7 @@ async function main() {
         {
           type: "list",
           name: "container",
-          message: "Container seç:",
+          message: "Select container:",
           choices: ["mp4", "mp3"],
         },
       ]);
@@ -35,11 +35,11 @@ async function main() {
           uniqueResolutions = await getAvailableResolutions(url);
 
           if (uniqueResolutions.length === 0) {
-            console.log("Bu video için mp4 muxed formatlarda çözünürlük bulunamadı.");
+            console.log("No mp4 muxed resolutions found for this video.");
             continue;
           }
         } catch (e) {
-          console.log("Çözünürlük alınırken hata:", e.message);
+          console.log("Error fetching resolutions:", e.message);
           continue;
         }
 
@@ -47,7 +47,7 @@ async function main() {
           {
             type: "list",
             name: "chosenResolution",
-            message: "Çözünürlük seç:",
+            message: "Select resolution:",
             choices: uniqueResolutions,
             default: uniqueResolutions[0],
           },
@@ -59,7 +59,7 @@ async function main() {
       await downloadVideo(url, container, resolution);
       break;
     } catch (error) {
-      console.log("Hata yakalandı:", error);
+      console.log("Caught an error:", error);
       break;
     }
   }

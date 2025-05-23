@@ -12,6 +12,12 @@ function sanitizeFilename(filename) {
   return filename.replace(/[\x00-\x1f<>:"/\\|?*\u{7f}]/gu, "-").trim();
 }
 
+function ensureDirExists(dirPath) {
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true });
+  }
+}
+
 function getAvailableFilename(basePath) {
   if (!fs.existsSync(basePath)) return basePath;
 
@@ -23,7 +29,7 @@ function getAvailableFilename(basePath) {
     const newName = path.join(dir, `${name} (${i})${ext}`);
     if (!fs.existsSync(newName)) return newName;
   }
-  throw new Error("Dosya ismi bulamadım 100 denemede de, bir şeyler çok kötü.");
+  throw new Error("Filename not found after 100 tries. Please try a different name.");
 }
 
 function findClosestResolution(availableFormats, targetResolution) {
@@ -47,7 +53,7 @@ function findClosestResolution(availableFormats, targetResolution) {
 }
 
 function streamToFile(stream, filepath, totalBytes) {
-  return new Promise((res, rej) => {
+  return new Promise((resolve, reject) => {
     if (typeof totalBytes === "number") {
       let downloaded = 0;
       stream.on("data", (chunk) => {
@@ -58,8 +64,8 @@ function streamToFile(stream, filepath, totalBytes) {
 
     stream
       .pipe(fs.createWriteStream(filepath))
-      .on("finish", res)
-      .on("error", rej);
+      .on("finish", resolve)
+      .on("error", reject);
   });
 }
 
@@ -71,59 +77,55 @@ export async function downloadVideo(
 ) {
   try {
     if (!ytdl.validateURL(url)) {
-      console.log("Dostum, bu link boktan, düzgün bir tane at.");
+      console.error("Invalid URL. Please provide a valid YouTube link.");
       return;
     }
 
     const info = await ytdl.getInfo(url);
 
-    // Platforma uyumlu dosya adı
+    // Prepare folders
+    const tempDir = path.resolve(__dirname, "temp");
+    const outputDir = path.resolve(__dirname, "output");
+    ensureDirExists(tempDir);
+    ensureDirExists(outputDir);
+
+    // Sanitize filename for platform compatibility
     const cleanTitle = sanitizeFilename(info.videoDetails.title);
-    const baseOutputPath = path.resolve(
-      __dirname,
-      `${cleanTitle}.${container}`
-    );
+    const baseOutputPath = path.join(outputDir, `${cleanTitle}.${container}`);
     const outputPath = getAvailableFilename(baseOutputPath);
 
     if (container === "mp4") {
-      const formatsMuxed = ytdl
+      const muxedFormats = ytdl
         .filterFormats(info.formats, "videoandaudio")
         .filter((f) => f.container === "mp4");
-      const formatsVideoOnly = ytdl
+      const videoOnlyFormats = ytdl
         .filterFormats(info.formats, "videoonly")
         .filter((f) => f.container === "mp4");
-      const formatsAudioOnly = ytdl.filterFormats(info.formats, "audioonly");
+      const audioOnlyFormats = ytdl.filterFormats(info.formats, "audioonly");
 
-      let format = formatsMuxed.find((f) => f.qualityLabel === resolution);
+      let selectedFormat = muxedFormats.find((f) => f.qualityLabel === resolution);
 
-      if (!format) {
-        format = findClosestResolution(formatsVideoOnly, resolution);
-        if (!format) throw new Error("Uygun video çözünürlüğü yok, pes ettim.");
+      if (!selectedFormat) {
+        selectedFormat = findClosestResolution(videoOnlyFormats, resolution);
+        if (!selectedFormat) throw new Error("No suitable video format found for the specified resolution.");
 
-        const audioFormat = formatsAudioOnly.reduce(
+        const bestAudioFormat = audioOnlyFormats.reduce(
           (prev, curr) => (curr.audioBitrate > prev.audioBitrate ? curr : prev),
-          formatsAudioOnly[0]
+          audioOnlyFormats[0]
         );
 
-        if (!audioFormat)
-          throw new Error("Ses kalitesi yüksek bir format bulunamadı.");
+        if (!bestAudioFormat) throw new Error("No high-quality audio format found.");
 
         console.log(
-          `Muxed format yok, video-only: ${format.qualityLabel}, ses: ${audioFormat.audioBitrate} kbps indirilecek.`
+          `Muxed format not found. Downloading video-only: ${selectedFormat.qualityLabel}, audio bitrate: ${bestAudioFormat.audioBitrate} kbps.`
         );
 
-        const tempVideoPath = path.resolve(
-          __dirname,
-          `temp-video-${Date.now()}.mp4`
-        );
-        const tempAudioPath = path.resolve(
-          __dirname,
-          `temp-audio-${Date.now()}.mp4`
-        );
+        const tempVideoPath = path.join(tempDir, `temp-video-${Date.now()}.mp4`);
+        const tempAudioPath = path.join(tempDir, `temp-audio-${Date.now()}.mp4`);
 
         await Promise.all([
-            await streamToFile(ytdl(url, { format }), tempVideoPath, parseInt(format.contentLength)),
-            await streamToFile(ytdl(url, { format: audioFormat }), tempAudioPath, parseInt(audioFormat.contentLength))
+          streamToFile(ytdl(url, { format: selectedFormat }), tempVideoPath, parseInt(selectedFormat.contentLength)),
+          streamToFile(ytdl(url, { format: bestAudioFormat }), tempAudioPath, parseInt(bestAudioFormat.contentLength)),
         ]);
 
         await new Promise((resolve, reject) => {
@@ -135,51 +137,59 @@ export async function downloadVideo(
             .on("end", () => {
               fs.unlinkSync(tempVideoPath);
               fs.unlinkSync(tempAudioPath);
-              console.log(
-                `Video ve ses başarıyla birleştirildi: ${outputPath}`
-              );
+              console.log(`\nVideo and audio successfully merged: ${outputPath}`);
               resolve();
             })
             .on("error", (err) => {
-              console.log("Birleştirme sırasında hata:", err);
+              console.error("\nError during merging:", err);
               reject(err);
             });
         });
       } else {
-        const videoStream = ytdl(url, { format });
-        videoStream.on(
-          "progress",
-          (chunkLength, downloadedBytes, totalBytes) => {
-            updateProgress(downloadedBytes, totalBytes);
-          }
-        );
+        const videoStream = ytdl(url, { format: selectedFormat });
+        videoStream.on("progress", (chunkLength, downloaded, total) => {
+          updateProgress(downloaded, total);
+        });
 
         await streamToFile(videoStream, outputPath);
-        bar.stop();
-        console.log(`Video başarıyla indirildi: ${outputPath}`);
+        stopBar();
+        console.log(`\nVideo successfully downloaded: ${outputPath}`);
       }
     } else if (container === "mp3") {
-      const audioStream = ytdl(url, { quality: "highestaudio" });
-      console.log(
-        `Ses indiriliyor, bitrate: ${mp3Bitrate}kbps, sample rate: ${sampleRate} Hz`
+      const sampleRate = 44100;
+      const audioFormats = ytdl.filterFormats(info.formats, "audioonly");
+      const bestAudioFormat = audioFormats.reduce(
+        (prev, curr) => (curr.audioBitrate > prev.audioBitrate ? curr : prev)
       );
 
-      await new Promise((res, rej) => {
+      const totalBytes = parseInt(bestAudioFormat.contentLength);
+      let downloaded = 0;
+      const audioStream = ytdl(url, { format: bestAudioFormat });
+
+      console.log(`Downloading audio: Bitrate ${mp3Bitrate} kbps, Sample rate ${sampleRate} Hz`);
+
+      audioStream.on("data", (chunk) => {
+        downloaded += chunk.length;
+        updateProgress(downloaded, totalBytes);
+      });
+
+      await new Promise((resolve, reject) => {
         ffmpeg(audioStream)
           .audioBitrate(mp3Bitrate)
           .audioFrequency(sampleRate)
           .format("mp3")
           .save(outputPath)
           .on("end", () => {
-            console.log(`Ses indirildi ve mp3 yapıldı: ${outputPath}`);
-            res();
+            console.log(`\nAudio file successfully downloaded and converted to mp3: ${outputPath}`);
+            resolve();
           })
-          .on("error", (err) => rej(err));
+          .on("error", (err) => {
+            console.error("\nffmpeg error:", err);
+            reject(err);
+          });
       });
-    } else {
-      console.log("Sadece mp4 ya da mp3 formatları destekleniyor.");
     }
   } catch (error) {
-    console.error("Bir hata çıktı abi:", error.message || error);
+    console.error("An error occurred during the process:", error.message || error);
   }
 }

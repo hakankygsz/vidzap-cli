@@ -1,7 +1,7 @@
 import cliProgress from "cli-progress";
 
 const bar = new cliProgress.SingleBar({
-  format: 'İndirme [{bar}] {percentage}% | {value}/{total} bytes',
+  format: 'Download [{bar}] {percentage}% | {value}/{total} bytes',
   barCompleteChar: '\u2588',
   barIncompleteChar: '\u2591',
   hideCursor: true

@@ -2,12 +2,11 @@ import ytdl from "@distube/ytdl-core";
 
 export async function getAvailableResolutions(url) {
   if (!ytdl.validateURL(url)) {
-    throw new Error("Bu URL geçerli değil.");
+    throw new Error("This URL is not valid.");
   }
 
   const info = await ytdl.getInfo(url);
 
-  // Muxed formatlardan (video+audio) mp4 olanları filtrele
   const formatsMuxed = ytdl
     .filterFormats(info.formats, "video")
     .filter((f) => f.container === "mp4");

@@ -3,101 +3,183 @@ import ffmpeg from "fluent-ffmpeg";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { stopBar, updateProgress } from "./bar.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-export async function downloadVideo(url, container, resolution) {
-  if (!ytdl.validateURL(url)) {
-    console.log("Bu URL geçerli değil, adam gibi bir link gir.");
-    return;
+function sanitizeFilename(filename) {
+  return filename.replace(/[\x00-\x1f<>:"/\\|?*\u{7f}]/gu, "-").trim();
+}
+
+function getAvailableFilename(basePath) {
+  if (!fs.existsSync(basePath)) return basePath;
+
+  const ext = path.extname(basePath);
+  const name = path.basename(basePath, ext);
+  const dir = path.dirname(basePath);
+
+  for (let i = 1; i < 100; i++) {
+    const newName = path.join(dir, `${name} (${i})${ext}`);
+    if (!fs.existsSync(newName)) return newName;
   }
+  throw new Error("Dosya ismi bulamadım 100 denemede de, bir şeyler çok kötü.");
+}
 
-  const info = await ytdl.getInfo(url);
-  const title = info.videoDetails.title.replace(/[\/\\?%*:|"<>]/g, "-");
-  const outputPath = path.resolve(__dirname, `${title}.${container}`);
+function findClosestResolution(availableFormats, targetResolution) {
+  const targetNum = parseInt(targetResolution);
+  if (isNaN(targetNum)) return null;
 
-  console.log(`İndiriliyor: ${title}`);
+  const filtered = availableFormats
+    .map((f) => ({
+      format: f,
+      resNum: parseInt(f.qualityLabel),
+    }))
+    .filter(({ resNum }) => !isNaN(resNum));
 
-  if (container === "mp4") {
-    const formatsMuxed = ytdl
-      .filterFormats(info.formats, "videoandaudio")
-      .filter((f) => f.container === "mp4");
+  if (filtered.length === 0) return null;
 
-    const formatsVideoOnly = ytdl
-      .filterFormats(info.formats, "videoonly")
-      .filter((f) => f.container === "mp4");
+  filtered.sort(
+    (a, b) => Math.abs(a.resNum - targetNum) - Math.abs(b.resNum - targetNum)
+  );
 
-    const formatsAudioOnly = ytdl.filterFormats(info.formats, "audioonly");
+  return filtered[0].format;
+}
 
-    let format = formatsMuxed.find((f) => f.qualityLabel === resolution);
+function streamToFile(stream, filepath, totalBytes) {
+  return new Promise((res, rej) => {
+    if (typeof totalBytes === "number") {
+      let downloaded = 0;
+      stream.on("data", (chunk) => {
+        downloaded += chunk.length;
+        updateProgress(downloaded, totalBytes);
+      });
+    }
 
-    if (format) {
-      ytdl(url, { format: format })
-        .pipe(fs.createWriteStream(outputPath))
-        .on("finish", () => {
-          console.log(`Video başarıyla indirildi: ${outputPath}`);
-        })
-        .on("error", (err) => {
-          console.log("Video indirirken hata çıktı:", err);
+    stream
+      .pipe(fs.createWriteStream(filepath))
+      .on("finish", res)
+      .on("error", rej);
+  });
+}
+
+export async function downloadVideo(
+  url,
+  container = "mp4",
+  resolution = "720p",
+  mp3Bitrate = 128
+) {
+  try {
+    if (!ytdl.validateURL(url)) {
+      console.log("Dostum, bu link boktan, düzgün bir tane at.");
+      return;
+    }
+
+    const info = await ytdl.getInfo(url);
+
+    // Platforma uyumlu dosya adı
+    const cleanTitle = sanitizeFilename(info.videoDetails.title);
+    const baseOutputPath = path.resolve(
+      __dirname,
+      `${cleanTitle}.${container}`
+    );
+    const outputPath = getAvailableFilename(baseOutputPath);
+
+    if (container === "mp4") {
+      const formatsMuxed = ytdl
+        .filterFormats(info.formats, "videoandaudio")
+        .filter((f) => f.container === "mp4");
+      const formatsVideoOnly = ytdl
+        .filterFormats(info.formats, "videoonly")
+        .filter((f) => f.container === "mp4");
+      const formatsAudioOnly = ytdl.filterFormats(info.formats, "audioonly");
+
+      let format = formatsMuxed.find((f) => f.qualityLabel === resolution);
+
+      if (!format) {
+        format = findClosestResolution(formatsVideoOnly, resolution);
+        if (!format) throw new Error("Uygun video çözünürlüğü yok, pes ettim.");
+
+        const audioFormat = formatsAudioOnly.reduce(
+          (prev, curr) => (curr.audioBitrate > prev.audioBitrate ? curr : prev),
+          formatsAudioOnly[0]
+        );
+
+        if (!audioFormat)
+          throw new Error("Ses kalitesi yüksek bir format bulunamadı.");
+
+        console.log(
+          `Muxed format yok, video-only: ${format.qualityLabel}, ses: ${audioFormat.audioBitrate} kbps indirilecek.`
+        );
+
+        const tempVideoPath = path.resolve(
+          __dirname,
+          `temp-video-${Date.now()}.mp4`
+        );
+        const tempAudioPath = path.resolve(
+          __dirname,
+          `temp-audio-${Date.now()}.mp4`
+        );
+
+        await Promise.all([
+            await streamToFile(ytdl(url, { format }), tempVideoPath, parseInt(format.contentLength)),
+            await streamToFile(ytdl(url, { format: audioFormat }), tempAudioPath, parseInt(audioFormat.contentLength))
+        ]);
+
+        await new Promise((resolve, reject) => {
+          ffmpeg()
+            .input(tempVideoPath)
+            .input(tempAudioPath)
+            .outputOptions(["-c:v copy", "-c:a aac", "-strict experimental"])
+            .save(outputPath)
+            .on("end", () => {
+              fs.unlinkSync(tempVideoPath);
+              fs.unlinkSync(tempAudioPath);
+              console.log(
+                `Video ve ses başarıyla birleştirildi: ${outputPath}`
+              );
+              resolve();
+            })
+            .on("error", (err) => {
+              console.log("Birleştirme sırasında hata:", err);
+              reject(err);
+            });
         });
-    } else {
-      const videoFormat = formatsVideoOnly.find((f) => f.qualityLabel === resolution);
-      const audioFormat = formatsAudioOnly.find(
-        (f) => f.audioBitrate === Math.max(...formatsAudioOnly.map((f) => f.audioBitrate))
+      } else {
+        const videoStream = ytdl(url, { format });
+        videoStream.on(
+          "progress",
+          (chunkLength, downloadedBytes, totalBytes) => {
+            updateProgress(downloadedBytes, totalBytes);
+          }
+        );
+
+        await streamToFile(videoStream, outputPath);
+        bar.stop();
+        console.log(`Video başarıyla indirildi: ${outputPath}`);
+      }
+    } else if (container === "mp3") {
+      const audioStream = ytdl(url, { quality: "highestaudio" });
+      console.log(
+        `Ses indiriliyor, bitrate: ${mp3Bitrate}kbps, sample rate: ${sampleRate} Hz`
       );
 
-      if (!videoFormat || !audioFormat) {
-        console.log("İstenen çözünürlükte video ya da uygun ses bulunamadı.");
-        return;
-      }
-
-      const videoStream = ytdl(url, { format: videoFormat });
-      const audioStream = ytdl(url, { format: audioFormat });
-
-      const tempVideoPath = path.resolve(__dirname, "temp-video.mp4");
-      const tempAudioPath = path.resolve(__dirname, "temp-audio.mp4");
-
-      await Promise.all([
-        new Promise((res, rej) => {
-          videoStream.pipe(fs.createWriteStream(tempVideoPath)).on("finish", res).on("error", rej);
-        }),
-        new Promise((res, rej) => {
-          audioStream.pipe(fs.createWriteStream(tempAudioPath)).on("finish", res).on("error", rej);
-        }),
-      ]);
-
-      ffmpeg()
-        .input(tempVideoPath)
-        .input(tempAudioPath)
-        .outputOptions([
-          "-c:v copy",
-          "-c:a aac",
-          "-strict experimental",
-        ])
-        .save(outputPath)
-        .on("end", () => {
-          fs.unlinkSync(tempVideoPath);
-          fs.unlinkSync(tempAudioPath);
-          console.log(`Video ve ses başarıyla birleştirildi: ${outputPath}`);
-        })
-        .on("error", (err) => {
-          console.log("Birleştirme sırasında hata:", err);
-        });
-    }
-  } else if (container === "mp3") {
-    const stream = ytdl(url, { quality: "highestaudio" });
-
-    ffmpeg(stream)
-      .audioBitrate(128)
-      .save(outputPath)
-      .on("end", () => {
-        console.log(`Ses başarıyla indirildi ve mp3 yapıldı: ${outputPath}`);
-      })
-      .on("error", (err) => {
-        console.log("Ses indirirken/dönüştürürken hata:", err);
+      await new Promise((res, rej) => {
+        ffmpeg(audioStream)
+          .audioBitrate(mp3Bitrate)
+          .audioFrequency(sampleRate)
+          .format("mp3")
+          .save(outputPath)
+          .on("end", () => {
+            console.log(`Ses indirildi ve mp3 yapıldı: ${outputPath}`);
+            res();
+          })
+          .on("error", (err) => rej(err));
       });
-  } else {
-    console.log("Container olarak sadece mp4 veya mp3 kabul ediliyor.");
+    } else {
+      console.log("Sadece mp4 ya da mp3 formatları destekleniyor.");
+    }
+  } catch (error) {
+    console.error("Bir hata çıktı abi:", error.message || error);
   }
 }

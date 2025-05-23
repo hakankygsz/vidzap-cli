@@ -31,7 +31,7 @@ Vidzap CLI is a lightweight command-line tool for downloading YouTube videos and
 Run the CLI tool:
 
 ```bash
-node index.js
+node app.js
 ```
 
 Follow the interactive prompts:

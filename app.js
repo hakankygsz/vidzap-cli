@@ -28,6 +28,7 @@ async function main() {
       ]);
 
       let resolution = null;
+      let frequency = null;
 
       if (container === "mp4") {
         let uniqueResolutions = [];
@@ -54,9 +55,21 @@ async function main() {
         ]);
 
         resolution = chosenResolution;
+      } else if (container === "mp3") {
+        const frequencies = ["44100 Hz", "48000 Hz", "96000 Hz"];
+        const { chosenFrequency } = await inquirer.prompt([
+          {
+            type: "list",
+            name: "chosenFrequency",
+            message: "Select audio frequency:",
+            choices: frequencies,
+            default: frequencies[0],
+          },
+        ]);
+        frequency = chosenFrequency;
       }
 
-      await downloadVideo(url, container, resolution);
+      await downloadVideo(url, container, resolution, frequency);
       break;
     } catch (error) {
       console.log("Caught an error:", error);

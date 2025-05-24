@@ -49,8 +49,9 @@ export function updateProgress(downloaded, total) {
 export function stopBar() {
   if (barStarted) {
     bar.stop();
-    console.log(chalk.greenBright('\n✅ Download complete!'));
     barStarted = false;
+    lastTime = 0;
+    lastValue = 0;
   }
 }
 

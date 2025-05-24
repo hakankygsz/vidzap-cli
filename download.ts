@@ -1,4 +1,4 @@
-import ytdl from "@distube/ytdl-core";
+import ytdl, { videoFormat } from "@distube/ytdl-core";
 import ffmpeg from "fluent-ffmpeg";
 import fs from "fs";
 import path from "path";
@@ -8,17 +8,17 @@ import { stopBar, updateProgress } from "./bar.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-function sanitizeFilename(filename) {
+function sanitizeFilename(filename: string): string {
   return filename.replace(/[\x00-\x1f<>:"/\\|?*\u{7f}]/gu, "-").trim();
 }
 
-function ensureDirExists(dirPath) {
+function ensureDirExists(dirPath: string): void {
   if (!fs.existsSync(dirPath)) {
     fs.mkdirSync(dirPath, { recursive: true });
   }
 }
 
-function getAvailableFilename(basePath) {
+function getAvailableFilename(basePath: string): string {
   if (!fs.existsSync(basePath)) return basePath;
 
   const ext = path.extname(basePath);
@@ -29,19 +29,20 @@ function getAvailableFilename(basePath) {
     const newName = path.join(dir, `${name} (${i})${ext}`);
     if (!fs.existsSync(newName)) return newName;
   }
-  throw new Error(
-    "Filename not found after 100 tries. Please try a different name."
-  );
+  throw new Error("Filename not found after 100 tries. Please try a different name.");
 }
 
-function findClosestResolution(availableFormats, targetResolution) {
+function findClosestResolution(
+  availableFormats: videoFormat[],
+  targetResolution: string
+): videoFormat | null {
   const targetNum = parseInt(targetResolution);
   if (isNaN(targetNum)) return null;
 
   const filtered = availableFormats
     .map((f) => ({
       format: f,
-      resNum: parseInt(f.qualityLabel),
+      resNum: parseInt(f.qualityLabel ?? "")
     }))
     .filter(({ resNum }) => !isNaN(resNum));
 
@@ -54,15 +55,15 @@ function findClosestResolution(availableFormats, targetResolution) {
   return filtered[0].format;
 }
 
-function streamToFile(stream, filepath, totalBytes) {
+function streamToFile(
+  stream: NodeJS.ReadableStream,
+  filepath: string,
+  totalBytes?: number
+): Promise<void> {
   return new Promise((resolve, reject) => {
-    if (
-      typeof totalBytes === "number" &&
-      !isNaN(totalBytes) &&
-      totalBytes > 0
-    ) {
+    if (typeof totalBytes === "number" && !isNaN(totalBytes) && totalBytes > 0) {
       let downloaded = 0;
-      stream.on("data", (chunk) => {
+      stream.on("data", (chunk: Buffer) => {
         downloaded += chunk.length;
         updateProgress(downloaded, totalBytes);
       });
@@ -79,12 +80,13 @@ function streamToFile(stream, filepath, totalBytes) {
 }
 
 export async function downloadVideo(
-  url,
-  container = "mp4",
+  url: string,
+  container: "mp4" | "mp3" = "mp4",
   resolution = "720p",
-  frequency = 44100,
+  frequency = '44100 Hz',
+  savePath = "./output",
   mp3Bitrate = 128
-) {
+): Promise<void> {
   try {
     if (!ytdl.validateURL(url)) {
       console.error("Invalid URL. Please provide a valid YouTube link.");
@@ -93,13 +95,11 @@ export async function downloadVideo(
 
     const info = await ytdl.getInfo(url);
 
-    // Prepare folders
     const tempDir = path.resolve(__dirname, "temp");
-    const outputDir = path.resolve(__dirname, "output");
+    const outputDir = path.resolve(__dirname, savePath);
     ensureDirExists(tempDir);
     ensureDirExists(outputDir);
 
-    // Sanitize filename for platform compatibility
     const cleanTitle = sanitizeFilename(info.videoDetails.title);
     const baseOutputPath = path.join(outputDir, `${cleanTitle}.${container}`);
     const outputPath = getAvailableFilename(baseOutputPath);
@@ -119,46 +119,39 @@ export async function downloadVideo(
 
       if (!selectedFormat) {
         selectedFormat = findClosestResolution(videoOnlyFormats, resolution);
-        if (!selectedFormat)
-          throw new Error(
-            "No suitable video format found for the specified resolution."
-          );
+        if (!selectedFormat) {
+          throw new Error("No suitable video format found for the specified resolution.");
+        }
 
-        const bestAudioFormat = audioOnlyFormats.reduce(
-          (prev, curr) => (curr.audioBitrate > prev.audioBitrate ? curr : prev),
-          audioOnlyFormats[0]
+        const bestAudioFormat = audioOnlyFormats.reduce((prev, curr) =>
+          (curr.audioBitrate ?? 0) > (prev.audioBitrate ?? 0) ? curr : prev
         );
 
-        if (!bestAudioFormat)
+        if (!bestAudioFormat) {
           throw new Error("No high-quality audio format found.");
+        }
 
         console.log(
           `Muxed format not found. Downloading video-only: ${selectedFormat.qualityLabel}, audio bitrate: ${bestAudioFormat.audioBitrate} kbps.`
         );
 
-        const tempVideoPath = path.join(
-          tempDir,
-          `temp-video-${Date.now()}.mp4`
-        );
-        const tempAudioPath = path.join(
-          tempDir,
-          `temp-audio-${Date.now()}.mp4`
-        );
+        const tempVideoPath = path.join(tempDir, `temp-video-${Date.now()}.mp4`);
+        const tempAudioPath = path.join(tempDir, `temp-audio-${Date.now()}.mp4`);
 
         await Promise.all([
           streamToFile(
             ytdl(url, { format: selectedFormat }),
             tempVideoPath,
-            parseInt(selectedFormat.contentLength)
+            parseInt(selectedFormat.contentLength ?? "")
           ),
           streamToFile(
             ytdl(url, { format: bestAudioFormat }),
             tempAudioPath,
-            parseInt(bestAudioFormat.contentLength)
-          ),
+            parseInt(bestAudioFormat.contentLength ?? "")
+          )
         ]);
 
-        await new Promise((resolve, reject) => {
+        await new Promise<void>((resolve, reject) => {
           ffmpeg()
             .input(tempVideoPath)
             .input(tempAudioPath)
@@ -167,9 +160,7 @@ export async function downloadVideo(
             .on("end", () => {
               fs.unlinkSync(tempVideoPath);
               fs.unlinkSync(tempAudioPath);
-              console.log(
-                `\nVideo and audio successfully merged: ${outputPath}`
-              );
+              console.log(`\nVideo and audio successfully merged: ${outputPath}`);
               resolve();
             })
             .on("error", (err) => {
@@ -191,36 +182,34 @@ export async function downloadVideo(
       const tempAudioPath = path.join(tempDir, `temp-audio-${Date.now()}.webm`);
       const audioFormats = ytdl.filterFormats(info.formats, "audioonly");
       const bestAudioFormat = audioFormats.reduce((prev, curr) =>
-        curr.audioBitrate > prev.audioBitrate ? curr : prev
+        (curr.audioBitrate ?? 0) > (prev.audioBitrate ?? 0) ? curr : prev
       );
 
-      const totalBytes = parseInt(bestAudioFormat.contentLength);
+      const totalBytes = parseInt(bestAudioFormat.contentLength ?? "0");
       let downloaded = 0;
       const audioStream = ytdl(url, { format: bestAudioFormat });
 
-      const formattedFrequency = parseInt(frequency);
+      const formattedFreq = parseInt(frequency)
 
       console.log(
         `Downloading audio: Bitrate ${mp3Bitrate} kbps, Sample rate ${frequency} Hz`
       );
 
-      audioStream.on("data", (chunk) => {
+      audioStream.on("data", (chunk: Buffer) => {
         downloaded += chunk.length;
         updateProgress(downloaded, totalBytes);
       });
 
       await streamToFile(audioStream, tempAudioPath);
 
-      await new Promise((resolve, reject) => {
+      await new Promise<void>((resolve, reject) => {
         ffmpeg(tempAudioPath)
           .audioBitrate(mp3Bitrate)
-          .audioFrequency(formattedFrequency)
+          .audioFrequency(formattedFreq)
           .save(outputPath)
           .on("end", () => {
-            fs.unlinkSync(tempAudioPath); // temp dosyayı sil
-            console.log(
-              `\nAudio file successfully converted to mp3: ${outputPath}`
-            );
+            fs.unlinkSync(tempAudioPath);
+            console.log(`\nAudio file successfully converted to mp3: ${outputPath}`);
             resolve();
           })
           .on("error", (err) => {
@@ -229,10 +218,7 @@ export async function downloadVideo(
           });
       });
     }
-  } catch (error) {
-    console.error(
-      "An error occurred during the process:",
-      error.message || error
-    );
+  } catch (error: any) {
+    console.error("An error occurred during the process:", error.message || error);
   }
 }

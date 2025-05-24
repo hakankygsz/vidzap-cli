@@ -15,12 +15,17 @@ let barStarted = false;
 let lastTime = 0;
 let lastValue = 0;
 
-export function updateProgress(downloaded, total) {
+interface ProgressPayload {
+  speed: string;
+  eta_formatted: string;
+}
+
+export function updateProgress(downloaded: number, total: number): void {
   if (!barStarted) {
     bar.start(total, 0, {
       speed: "0.00",
       eta_formatted: "N/A"
-    });
+    } as ProgressPayload);
     barStarted = true;
     lastTime = Date.now();
     lastValue = 0;
@@ -37,16 +42,16 @@ export function updateProgress(downloaded, total) {
   lastValue = downloaded;
 
   // Kalan süre tahmini: kalan byte / hız
-  const eta = speed > 0 ? ( (total - downloaded) / 1024 / speed ) : 0;
+  const eta = parseFloat(speed) > 0 ? ((total - downloaded) / 1024 / parseFloat(speed)) : 0;
   const etaFormatted = new Date(eta * 1000).toISOString().substr(11, 8);
 
   bar.update(downloaded, {
     speed,
     eta_formatted: etaFormatted
-  });
+  } as ProgressPayload);
 }
 
-export function stopBar() {
+export function stopBar(): void {
   if (barStarted) {
     bar.stop();
     barStarted = false;

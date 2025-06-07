@@ -1,6 +1,7 @@
+#!/usr/bin/env node
 import inquirer from 'inquirer';
 import { downloadVideo } from './download.js';
-import { getAvailableResolutions } from './formats.js';
+import { getAvailableFrequencies, getAvailableResolutions } from './formats.js';
 
 type Container = 'mp4' | 'mp3';
 
@@ -58,7 +59,18 @@ async function main(): Promise<void> {
 
         resolution = chosenResolution;
       } else {
-        const frequencies = ['44100 Hz', '48000 Hz', '96000 Hz'];
+        let frequencies: string[] = [];
+        try {
+          frequencies = await getAvailableFrequencies(url);
+
+          if (frequencies.length === 0) {
+            console.log('No audio frequencies found for this video.');
+            continue;
+          }
+        } catch (e: any) {
+          console.log('Error fetching audio frequencies:', e.message || e);
+          continue;
+        }
 
         const { chosenFrequency }: { chosenFrequency: string } = await inquirer.prompt([
           {

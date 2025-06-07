@@ -8,17 +8,17 @@ import { stopBar, updateProgress } from "./bar.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-function sanitizeFilename(filename: string): string {
+const sanitizeFilename = (filename: string): string => {
   return filename.replace(/[\x00-\x1f<>:"/\\|?*\u{7f}]/gu, "-").trim();
-}
+};
 
-function ensureDirExists(dirPath: string): void {
+const ensureDirExists = (dirPath: string): void => {
   if (!fs.existsSync(dirPath)) {
     fs.mkdirSync(dirPath, { recursive: true });
   }
-}
+};
 
-function getAvailableFilename(basePath: string): string {
+const getAvailableFilename = (basePath: string): string => {
   if (!fs.existsSync(basePath)) return basePath;
 
   const ext = path.extname(basePath);
@@ -30,12 +30,12 @@ function getAvailableFilename(basePath: string): string {
     if (!fs.existsSync(newName)) return newName;
   }
   throw new Error("Filename not found after 100 tries. Please try a different name.");
-}
+};
 
-function findClosestResolution(
+const findClosestResolution = (
   availableFormats: videoFormat[],
   targetResolution: string
-): videoFormat | null {
+): videoFormat | null => {
   const targetNum = parseInt(targetResolution);
   if (isNaN(targetNum)) return null;
 
@@ -53,13 +53,13 @@ function findClosestResolution(
   );
 
   return filtered[0].format;
-}
+};
 
-function streamToFile(
+const streamToFile = (
   stream: NodeJS.ReadableStream,
   filepath: string,
   totalBytes?: number
-): Promise<void> {
+): Promise<void> => {
   return new Promise((resolve, reject) => {
     if (typeof totalBytes === "number" && !isNaN(totalBytes) && totalBytes > 0) {
       let downloaded = 0;
@@ -77,16 +77,16 @@ function streamToFile(
       })
       .on("error", reject);
   });
-}
+};
 
-export async function downloadVideo(
+export const downloadVideo = async (
   url: string,
   container: "mp4" | "mp3" = "mp4",
   resolution = "720p",
   frequency = '44100 Hz',
   savePath = "./output",
   mp3Bitrate = 128
-): Promise<void> {
+): Promise<void> => {
   try {
     if (!ytdl.validateURL(url)) {
       console.error("Invalid URL. Please provide a valid YouTube link.");
@@ -189,7 +189,7 @@ export async function downloadVideo(
       let downloaded = 0;
       const audioStream = ytdl(url, { format: bestAudioFormat });
 
-      const formattedFreq = parseInt(frequency)
+      const formattedFreq = parseInt(frequency);
 
       console.log(
         `Downloading audio: Bitrate ${mp3Bitrate} kbps, Sample rate ${frequency} Hz`
@@ -221,4 +221,4 @@ export async function downloadVideo(
   } catch (error: any) {
     console.error("An error occurred during the process:", error.message || error);
   }
-}
+};

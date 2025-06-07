@@ -21,3 +21,15 @@ export async function getAvailableResolutions(url: string): Promise<string[]> {
 
   return uniqueResolutions;
 }
+
+export async function getAvailableFrequencies(videoUrl) {
+  const info = await ytdl.getInfo(videoUrl);
+  const audioFormats = ytdl.filterFormats(info.formats, 'audioonly');
+
+  // Frekansları çıkar ve tekrar edenleri filtrele
+  const uniqueFrequencies = Array.from(
+    new Set(audioFormats.map(f => `${f.audioSampleRate} Hz`).filter(Boolean))
+  );
+
+  return uniqueFrequencies;
+}
